@@ -2,7 +2,14 @@
    TELETEXT 2099 — INTERACTIVE MOVEABLE WORLD MAP WITH D3 ZOOM & PAN
    ========================================================================== */
 
-import { getCountry } from '../data/countryData.js';
+import { countryDatabase, getCountry } from '../data/countryData.js';
+import {
+  getSignalProfile,
+  getSignalTierClass,
+  PIPELINE_ROUTES,
+  SIGNAL_LAYER_LABELS,
+  SIGNAL_MARKERS
+} from '../data/signalData.js';
 import { synthEngine } from '../audio/synthEngine.js';
 
 // Full ISO 3166-1 numeric → 3-letter mapping (177 countries)
@@ -43,6 +50,9 @@ class WorldMapExplorer {
     this.container = null;
     this.svg = null;
     this.g = null;
+    this.signalOverlayGroup = null;
+    this.signalMarkerGroup = null;
+    this.signalRouteGroup = null;
     this.onSelectCountryCallback = null;
     this.selectedCountryCode = null;
   }
@@ -62,6 +72,8 @@ class WorldMapExplorer {
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     this.container.appendChild(svg);
     this.svg = svg;
+    this.renderSignalUi();
+    this.updateSignalPanels('USA');
 
     try {
       const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
@@ -85,6 +97,7 @@ class WorldMapExplorer {
     const projection = d3.geoMercator()
       .scale((width / 6.2))
       .translate([width / 2, height / 1.5]);
+    this.projection = projection;
 
     const pathGenerator = d3.geoPath().projection(projection);
     const countries = topojson.feature(world, world.objects.countries).features;
@@ -100,6 +113,7 @@ class WorldMapExplorer {
         .scaleExtent([1, 12])
         .on('zoom', (event) => {
           g.setAttribute('transform', event.transform.toString());
+          this.updateSignalOverlayScale(event.transform.k);
         });
       
       this.zoomBehavior = zoom;
@@ -125,6 +139,10 @@ class WorldMapExplorer {
 
       // getCountry() has a universal generator — works for ANY iso3 code!
       const countryInfo = iso3 ? getCountry(iso3) : null;
+      const signalProfile = iso3 ? getSignalProfile(iso3) : null;
+      if (signalProfile) {
+        path.classList.add(`cii-${getSignalTierClass(signalProfile.cii)}`);
+      }
 
       path.addEventListener('mouseenter', () => {
         const flagEl = document.getElementById('hover-flag');
@@ -134,7 +152,7 @@ class WorldMapExplorer {
         if (countryInfo) {
           if (flagEl) flagEl.textContent = countryInfo.flag;
           if (titleEl) titleEl.textContent = `${countryInfo.name} (${iso3})`;
-          if (subEl) subEl.textContent = `Capital: ${countryInfo.capital} | ${countryInfo.stockIndex}`;
+          if (subEl) subEl.textContent = `CII ${signalProfile.cii} ${signalProfile.tier} | Finance ${signalProfile.finance} | ${countryInfo.stockIndex}`;
         } else {
           if (flagEl) flagEl.textContent = '🌍';
           if (titleEl) titleEl.textContent = `Territory ${numericId}`;
@@ -152,12 +170,237 @@ class WorldMapExplorer {
         // Always fire callback — getCountry universal generator guarantees data
         if (iso3 && this.onSelectCountryCallback) {
           this.selectedCountryCode = iso3;
+          this.updateSignalPanels(iso3);
           this.onSelectCountryCallback(getCountry(iso3));
         }
       });
 
       g.appendChild(path);
     });
+
+    this.renderSignalSvgOverlays();
+  }
+
+  renderSignalSvgOverlays() {
+    if (!this.g || !this.projection) return;
+
+    const routeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    routeGroup.setAttribute('class', 'signal-route-layer');
+    this.signalRouteGroup = routeGroup;
+    this.g.appendChild(routeGroup);
+
+    PIPELINE_ROUTES.forEach(route => {
+      const projected = route.points
+        .map(([lon, lat]) => this.projection([lon, lat]))
+        .filter(Boolean);
+      if (projected.length < 2) return;
+
+      const pathData = this.createSmoothRoutePath(projected);
+
+      const routeUnderlay = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      routeUnderlay.setAttribute('d', pathData);
+      routeUnderlay.setAttribute('class', `signal-route-underlay signal-layer-${route.layer}`);
+      routeUnderlay.setAttribute('data-layer', route.layer);
+      routeGroup.appendChild(routeUnderlay);
+
+      const routePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      routePath.setAttribute('d', pathData);
+      routePath.setAttribute('class', `signal-route signal-layer-${route.layer}`);
+      routePath.setAttribute('data-layer', route.layer);
+      routePath.setAttribute('data-label', route.label);
+      routeGroup.appendChild(routePath);
+
+      [projected[0], projected[projected.length - 1]].forEach(([x, y]) => {
+        const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        node.setAttribute('cx', x);
+        node.setAttribute('cy', y);
+        node.setAttribute('r', '1.8');
+        node.setAttribute('data-base-r', '1.8');
+        node.setAttribute('class', `signal-route-node signal-layer-${route.layer}`);
+        node.setAttribute('data-layer', route.layer);
+        routeGroup.appendChild(node);
+      });
+    });
+
+    const markerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    markerGroup.setAttribute('class', 'signal-marker-layer');
+    this.signalMarkerGroup = markerGroup;
+    this.g.appendChild(markerGroup);
+
+    SIGNAL_MARKERS.forEach(marker => {
+      const point = this.projection([marker.lon, marker.lat]);
+      if (!point) return;
+
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', point[0]);
+      dot.setAttribute('cy', point[1]);
+      dot.setAttribute('r', marker.level === 'critical' ? '3.8' : '3');
+      dot.setAttribute('data-base-r', marker.level === 'critical' ? '3.8' : '3');
+      dot.setAttribute('class', `signal-dot signal-${marker.level} signal-layer-${marker.layer}`);
+      dot.setAttribute('data-layer', marker.layer);
+      dot.setAttribute('data-label', marker.label);
+      markerGroup.appendChild(dot);
+
+      dot.addEventListener('mouseenter', () => {
+        const flagEl = document.getElementById('hover-flag');
+        const titleEl = document.getElementById('hover-title');
+        const subEl = document.getElementById('hover-sub');
+        if (flagEl) flagEl.textContent = '!';
+        if (titleEl) titleEl.textContent = marker.label;
+        if (subEl) subEl.textContent = `${marker.layer.toUpperCase()} | ${marker.level.toUpperCase()}`;
+      });
+    });
+  }
+
+  createSmoothRoutePath(points) {
+    if (points.length < 2) return '';
+    if (points.length === 2) {
+      const [[x1, y1], [x2, y2]] = points;
+      const cx = (x1 + x2) / 2;
+      const cy = Math.min(y1, y2) - Math.abs(x2 - x1) * 0.08;
+      return `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    }
+
+    let path = `M ${points[0][0].toFixed(1)} ${points[0][1].toFixed(1)}`;
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const [x, y] = points[i];
+      const [nextX, nextY] = points[i + 1];
+      const midX = (x + nextX) / 2;
+      const midY = (y + nextY) / 2;
+      path += ` Q ${x.toFixed(1)} ${y.toFixed(1)} ${midX.toFixed(1)} ${midY.toFixed(1)}`;
+    }
+    const last = points[points.length - 1];
+    path += ` T ${last[0].toFixed(1)} ${last[1].toFixed(1)}`;
+    return path;
+  }
+
+  updateSignalOverlayScale(scale = 1) {
+    const safeScale = Math.max(1, scale);
+    this.container?.querySelectorAll('.signal-dot').forEach(dot => {
+      const baseRadius = Number(dot.getAttribute('data-base-r') || 3);
+      dot.setAttribute('r', (baseRadius / Math.sqrt(safeScale)).toFixed(2));
+      dot.setAttribute('stroke-width', (0.8 / safeScale).toFixed(2));
+    });
+
+    this.container?.querySelectorAll('.signal-route').forEach(route => {
+      route.setAttribute('stroke-width', (1.2 / safeScale).toFixed(2));
+    });
+
+    this.container?.querySelectorAll('.signal-route-underlay').forEach(route => {
+      route.setAttribute('stroke-width', (3.8 / safeScale).toFixed(2));
+    });
+
+    this.container?.querySelectorAll('.signal-route-node').forEach(node => {
+      const baseRadius = Number(node.getAttribute('data-base-r') || 1.8);
+      node.setAttribute('r', (baseRadius / Math.sqrt(safeScale)).toFixed(2));
+    });
+  }
+
+  renderSignalUi() {
+    const hoverCard = document.createElement('div');
+    hoverCard.className = 'map-overlay-info';
+    hoverCard.id = 'map-hover-card';
+    hoverCard.innerHTML = `
+      <div class="hover-flag" id="hover-flag">WORLD</div>
+      <div class="hover-details">
+        <div class="hover-title" id="hover-title">Hover over a country</div>
+        <div class="hover-sub" id="hover-sub">Drag map to move | Scroll to zoom | Click country</div>
+      </div>
+    `;
+
+    const layers = document.createElement('div');
+    layers.className = 'signal-layer-panel';
+    layers.innerHTML = `
+      <div class="signal-panel-title">LAYERS</div>
+      ${SIGNAL_LAYER_LABELS.map(layer => `
+        <label class="signal-layer-toggle">
+          <input type="checkbox" data-signal-layer="${layer.id}" checked>
+          <span>${layer.label}</span>
+        </label>
+      `).join('')}
+    `;
+
+    const insight = document.createElement('div');
+    insight.className = 'signal-insight-panel';
+    insight.id = 'signal-insight-panel';
+
+    const legend = document.createElement('div');
+    legend.className = 'map-signal-legend';
+    legend.innerHTML = `
+      <span>LEGEND</span>
+      <span><i class="legend-dot critical"></i> Critical</span>
+      <span><i class="legend-dot high"></i> High</span>
+      <span><i class="legend-dot elevated"></i> Elevated</span>
+      <span><i class="legend-dot watch"></i> Watch</span>
+      <span><i class="legend-line"></i> Pipeline / route</span>
+    `;
+
+    this.container.appendChild(hoverCard);
+    this.container.appendChild(layers);
+    this.container.appendChild(insight);
+    this.container.appendChild(legend);
+
+    layers.querySelectorAll('input[data-signal-layer]').forEach(input => {
+      input.addEventListener('change', () => this.applySignalLayerVisibility());
+    });
+  }
+
+  applySignalLayerVisibility() {
+    const enabledLayers = new Set(
+      [...this.container.querySelectorAll('input[data-signal-layer]:checked')]
+        .map(input => input.getAttribute('data-signal-layer'))
+    );
+
+    this.container.querySelectorAll('[data-layer]').forEach(node => {
+      const layer = node.getAttribute('data-layer');
+      node.classList.toggle('signal-layer-hidden', !enabledLayers.has(layer));
+    });
+  }
+
+  updateSignalPanels(countryCode = 'USA') {
+    const panel = document.getElementById('signal-insight-panel');
+    if (!panel) return;
+
+    const country = getCountry(countryCode);
+    const signal = getSignalProfile(country.code);
+    const tierClass = getSignalTierClass(signal.cii);
+    const composite = Math.round((signal.military + signal.economic + signal.disaster + signal.escalation) / 4);
+
+    panel.innerHTML = `
+      <div class="signal-panel-title">SIGNAL INSIGHTS</div>
+      <div class="signal-country-line">${country.flag} ${country.name}</div>
+      <div class="cii-card ${tierClass}">
+        <div class="cii-label">COUNTRY INSTABILITY INDEX</div>
+        <div class="cii-score">${signal.cii}</div>
+        <div class="cii-tier">${signal.tier}</div>
+      </div>
+      <div class="signal-block">
+        <div class="signal-block-title">Cross-stream correlation</div>
+        <div class="signal-bars">
+          ${this.renderSignalBar('Military', signal.military)}
+          ${this.renderSignalBar('Economic', signal.economic)}
+          ${this.renderSignalBar('Disaster', signal.disaster)}
+          ${this.renderSignalBar('Escalation', signal.escalation)}
+        </div>
+        <div class="signal-composite">Composite convergence: ${composite}%</div>
+      </div>
+      <div class="signal-block">
+        <div class="signal-block-title">Finance radar</div>
+        <div class="finance-radar-score">${signal.finance}%</div>
+        <div class="finance-radar-meta">${country.stockIndex} | ${country.currency}</div>
+      </div>
+    `;
+  }
+
+  renderSignalBar(label, value) {
+    const tierClass = getSignalTierClass(value);
+    return `
+      <div class="signal-bar-row">
+        <span>${label}</span>
+        <div class="signal-bar-track"><i class="${tierClass}" style="width:${Math.min(100, Math.max(0, value))}%"></i></div>
+        <b>${value}</b>
+      </div>
+    `;
   }
 
   zoomIn() {
@@ -206,6 +449,7 @@ class WorldMapExplorer {
       rect.setAttribute('stroke', '#00f0ff');
       rect.setAttribute('stroke-width', '1.5');
       rect.setAttribute('class', 'country-path');
+      rect.classList.add(`cii-${getSignalTierClass(getSignalProfile(code).cii)}`);
       rect.style.cursor = 'pointer';
 
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -220,6 +464,7 @@ class WorldMapExplorer {
 
       rect.addEventListener('click', () => {
         synthEngine.playRemoteClick();
+        this.updateSignalPanels(code);
         if (this.onSelectCountryCallback) {
           this.onSelectCountryCallback(info);
         }

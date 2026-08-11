@@ -4,11 +4,8 @@
 
 const YOUTUBE_EMBED_PARAMS = "autoplay=1&mute=1&playsinline=1&rel=0";
 
-const youtubeLiveEmbed = (channelId) =>
-  `https://www.youtube.com/embed/live_stream?channel=${channelId}&${YOUTUBE_EMBED_PARAMS}`;
-
-const youtubeLivePage = (channelId) =>
-  `https://www.youtube.com/channel/${channelId}/live`;
+const youtubeVideoEmbed = (videoId) =>
+  `https://www.youtube.com/embed/${videoId}?${YOUTUBE_EMBED_PARAMS}`;
 
 export const BROADCAST_CHANNELS = {
   ALJAZEERA: { name: "AL JAZEERA ENGLISH", channelId: "UCNye-wNBqNL5ZzHSJj3l8Bg" },
@@ -25,12 +22,25 @@ export const BROADCAST_CHANNELS = {
   CNA: { name: "CNA LIVE", channelId: "UC83jt4dlz1Gjl58fzQrrKZg" }
 };
 
-const makeBroadcastStream = (key, displayName = null) => {
+const makeYoutubeBroadcast = (key, videoId, displayName = null) => {
   const channel = BROADCAST_CHANNELS[key] || BROADCAST_CHANNELS.ALJAZEERA;
   return {
     name: displayName || `${channel.name} LIVE`,
-    url: youtubeLiveEmbed(channel.channelId),
-    sourceUrl: youtubeLivePage(channel.channelId),
+    type: "youtube",
+    url: youtubeVideoEmbed(videoId),
+    sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    videoId,
+    channelId: channel.channelId
+  };
+};
+
+const makeSourceBroadcast = (key, sourceUrl, displayName = null) => {
+  const channel = BROADCAST_CHANNELS[key] || BROADCAST_CHANNELS.ALJAZEERA;
+  return {
+    name: displayName || `${channel.name} LIVE`,
+    type: "source",
+    url: sourceUrl,
+    sourceUrl,
     channelId: channel.channelId
   };
 };
@@ -41,7 +51,7 @@ export const countryDatabase = {
     capitalLat: 38.8951, capitalLng: -77.0364, currency: "USD", stockIndex: "S&P 500 / NASDAQ",
     stockValue: "5,420.50", stockChange: "+1.25%", region: "Americas",
     liveNewsKey: "ABCNEWS",
-    newsChannel: makeBroadcastStream("ABCNEWS").url,
+    newsChannel: "https://abcnews.go.com/Live",
     facts: [
       "The USA has the world's largest economy by nominal GDP.",
       "The US flag design was created by a 17-year-old high school student in 1958.",
@@ -66,7 +76,7 @@ export const countryDatabase = {
     capitalLat: 51.5074, capitalLng: -0.1278, currency: "GBP", stockIndex: "FTSE 100",
     stockValue: "8,230.10", stockChange: "+0.85%", region: "Europe",
     liveNewsKey: "SKYNEWS",
-    newsChannel: makeBroadcastStream("SKYNEWS").url,
+    newsChannel: "https://news.sky.com/watch-live",
     facts: [
       "Teletext (Ceefax) was invented in the UK by BBC engineers in 1974.",
       "London Underground is the oldest subway network in the world (1863).",
@@ -88,7 +98,7 @@ export const countryDatabase = {
     capitalLat: 28.6139, capitalLng: 77.2090, currency: "INR", stockIndex: "NIFTY 50 / SENSEX",
     stockValue: "24,350.80", stockChange: "+1.40%", region: "Asia",
     liveNewsKey: "NDTV",
-    newsChannel: makeBroadcastStream("NDTV").url,
+    newsChannel: "https://www.ndtv.com/livetv-ndtv24x7",
     facts: [
       "India invented the mathematical concept of Zero ('0').",
       "UPI processes over 13 billion instant digital transactions monthly.",
@@ -110,7 +120,7 @@ export const countryDatabase = {
     capitalLat: 35.6762, capitalLng: 139.6503, currency: "JPY", stockIndex: "NIKKEI 225",
     stockValue: "38,910.40", stockChange: "+0.95%", region: "Asia",
     liveNewsKey: "NHK",
-    newsChannel: makeBroadcastStream("NHK").url,
+    newsChannel: "https://www3.nhk.or.jp/nhkworld/en/live_tv/",
     facts: [
       "Japan consists of over 6,800 islands.",
       "Tokyo is the most populous metropolitan area in the world (37M+ people).",
@@ -131,7 +141,7 @@ export const countryDatabase = {
     capitalLat: 52.5200, capitalLng: 13.4050, currency: "EUR", stockIndex: "DAX 40",
     stockValue: "18,450.20", stockChange: "+0.60%", region: "Europe",
     liveNewsKey: "DW",
-    newsChannel: makeBroadcastStream("DW").url,
+    newsChannel: "https://www.youtube.com/watch?v=5VgBK6S-pyc",
     facts: [
       "Germany has over 20,000 castles across its countryside.",
       "The Autobahn highway system has sections with no legal speed limits.",
@@ -152,7 +162,7 @@ export const countryDatabase = {
     capitalLat: 48.8566, capitalLng: 2.3522, currency: "EUR", stockIndex: "CAC 40",
     stockValue: "7,620.30", stockChange: "+0.45%", region: "Europe",
     liveNewsKey: "FRANCE24",
-    newsChannel: makeBroadcastStream("FRANCE24").url,
+    newsChannel: "https://www.youtube.com/watch?v=Ap-UM1O9RBU",
     facts: [
       "France is the most visited country in the world (90M+ tourists annually).",
       "The Louvre Museum in Paris is the world's largest art museum.",
@@ -188,50 +198,22 @@ const NAME_TO_CODE = {
   "venezuela":"VEN","vietnam":"VNM","yemen":"YEM","zambia":"ZMB","zimbabwe":"ZWE"
 };
 
-// Live Video Streams Registry. These use channel-based live embeds so the app
-// follows the broadcaster's current live stream instead of a rotating video ID.
+// Live Video Streams Registry. YouTube live pages rotate and many channels
+// disable embeds, so embed-hostile sources open in the app's internal viewer.
 export const LIVE_NEWS_STREAMS = {
-  "ALJAZEERA": makeBroadcastStream("ALJAZEERA", "AL JAZEERA LIVE"),
-  "SKYNEWS": makeBroadcastStream("SKYNEWS", "SKY NEWS LIVE"),
-  "EURONEWS": makeBroadcastStream("EURONEWS", "EURONEWS LIVE"),
-  "DW": makeBroadcastStream("DW", "DW NEWS LIVE"),
-  "FRANCE24": makeBroadcastStream("FRANCE24", "FRANCE 24 LIVE"),
-  "NASA": makeBroadcastStream("NASA", "NASA LIVE"),
-  "ABCNEWS": makeBroadcastStream("ABCNEWS", "ABC NEWS LIVE"),
-  "CNN": makeBroadcastStream("CNN", "CNN LIVE"),
-  "NDTV": makeBroadcastStream("NDTV", "NDTV LIVE"),
-  "WION": makeBroadcastStream("WION", "WION LIVE"),
-  "NHK": makeBroadcastStream("NHK", "NHK WORLD-JAPAN LIVE"),
-  "CNA": makeBroadcastStream("CNA", "CNA LIVE")
+  "ALJAZEERA": makeYoutubeBroadcast("ALJAZEERA", "gCNeDWCI0vo", "AL JAZEERA LIVE"),
+  "EURONEWS": makeYoutubeBroadcast("EURONEWS", "CQ3KsEbsYHs", "EURONEWS LIVE"),
+  "DW": makeYoutubeBroadcast("DW", "5VgBK6S-pyc", "DW NEWS LIVE"),
+  "FRANCE24": makeYoutubeBroadcast("FRANCE24", "Ap-UM1O9RBU", "FRANCE 24 LIVE"),
+  "SKYNEWS": makeSourceBroadcast("SKYNEWS", "https://news.sky.com/watch-live", "SKY NEWS LIVE"),
+  "NASA": makeSourceBroadcast("NASA", "https://www.nasa.gov/live/", "NASA LIVE"),
+  "ABCNEWS": makeSourceBroadcast("ABCNEWS", "https://abcnews.go.com/Live", "ABC NEWS LIVE"),
+  "CNN": makeSourceBroadcast("CNN", "https://www.cnn.com/watch", "CNN LIVE"),
+  "NDTV": makeSourceBroadcast("NDTV", "https://www.ndtv.com/livetv-ndtv24x7", "NDTV 24x7 LIVE"),
+  "WION": makeSourceBroadcast("WION", "https://www.wionews.com/live-tv", "WION LIVE"),
+  "NHK": makeSourceBroadcast("NHK", "https://www3.nhk.or.jp/nhkworld/en/live_tv/", "NHK WORLD-JAPAN LIVE"),
+  "CNA": makeSourceBroadcast("CNA", "https://www.channelnewsasia.com/watch-live", "CNA LIVE")
 };
-
-// Live Webcams Registry
-export const LIVE_WEBCAMS = [
-  {
-    id: "tokyo",
-    city: "TOKYO SHIBUYA",
-    url: youtubeLiveEmbed("UCqA_90QiNd98aJ1QPuCZq7A"),
-    sourceUrl: youtubeLivePage("UCqA_90QiNd98aJ1QPuCZq7A")
-  },
-  {
-    id: "ny",
-    city: "NEW YORK TIMES SQUARE",
-    url: youtubeLiveEmbed("UC6qrG3W8SMK0jior2olka3g"),
-    sourceUrl: "https://www.earthcam.com/cams/newyork/timessquare/?cam=tsrobo1"
-  },
-  {
-    id: "london",
-    city: "LONDON ABBEY ROAD",
-    url: youtubeLiveEmbed("UC6qrG3W8SMK0jior2olka3g"),
-    sourceUrl: "https://londonwebcam.co.uk/blog/live-webcams/"
-  },
-  {
-    id: "iss",
-    city: "SPACE ISS ORBIT",
-    url: youtubeLiveEmbed(BROADCAST_CHANNELS.NASA.channelId),
-    sourceUrl: "https://www.nasa.gov/live/"
-  }
-];
 
 // Universal Country Lookup & Dynamic Generator (GUARANTEES NO COUNTRY FAILS!)
 export function getCountry(codeOrName) {

@@ -42,77 +42,24 @@
 
   <!-- Main Application Layout -->
   <div class="app-layout">
-    <!-- Left Sidebar: Country Search, Saved Wiki Pages & Tuning -->
-    <aside class="control-panel">
-      <!-- Country Search Box -->
-      <div class="panel-section search-section">
-        <h2 class="panel-title">🔎 COUNTRY SEARCH MATRIX</h2>
-        <div class="search-box-wrapper">
-          <input type="text" id="country-search-input" placeholder="Type country name..." autocomplete="off">
-          <div id="search-results-dropdown" class="search-dropdown hidden"></div>
-        </div>
-      </div>
-
-      <div class="panel-section saved-wiki-section">
-        <h2 class="panel-title">SAVED WIKI PAGES</h2>
-        <div class="saved-wiki-list" id="saved-wiki-list">
-          <div class="saved-wiki-empty">No saved Wiki pages yet.</div>
-        </div>
-      </div>
-
-      <!-- TV CRT Hardware Tuning Controls -->
-      <div class="panel-section crt-controls">
-        <h2 class="panel-title">CRT & AUDIO TUNER</h2>
-        
-        <div class="tuner-control">
-          <label for="slider-volume">Audio Volume:</label>
-          <input type="range" id="slider-volume" min="0" max="100" value="50">
-        </div>
-
-        <div class="tuner-control">
-          <label for="slider-curvature">Screen Curvature:</label>
-          <input type="range" id="slider-curvature" min="0" max="100" value="30">
-        </div>
-
-        <div class="tuner-control">
-          <label for="slider-scanlines">Scanlines:</label>
-          <input type="range" id="slider-scanlines" min="0" max="100" value="50">
-        </div>
-
-        <div class="tuner-control">
-          <label for="slider-vhs">VHS Static:</label>
-          <input type="range" id="slider-vhs" min="0" max="100" value="20">
-        </div>
-
-        <div class="tuner-row">
-          <button class="tuner-btn" id="btn-crt-toggle">3D VIEW</button>
-          <button class="tuner-btn" id="btn-static-burst">STATIC</button>
-        </div>
-      </div>
-
-      <!-- API Key Config -->
-      <div class="panel-section api-key-section">
-        <h2 class="panel-title">GNEWS API KEY (OPTIONAL)</h2>
-        <div class="api-key-row">
-          <input type="password" id="gnews-api-key-input" placeholder="Paste GNews key..." autocomplete="off">
-          <button class="api-eye-btn" id="btn-toggle-gnews-key" type="button" title="Show or hide API key">👁</button>
-        </div>
-        <div id="api-status-badge" style="font-family:var(--font-mono); font-size:9px; color:var(--tt-green); margin-top:4px;">
-          📡 WIKINEWS & REST STREAM ACTIVE
-        </div>
-      </div>
-    </aside>
-
     <!-- Center Workspace: Full Moveable Map Viewport + Bottom Dock Bar -->
     <main class="viewport-workspace">
       <!-- World Map Viewport -->
       <section class="map-section">
         <div class="map-header">
           <div class="section-tag">📡 GLOBE-TEXT 200 // MOVEABLE WORLD MAP (DRAG & ZOOM)</div>
+          <div class="map-command-search">
+            <div class="search-box-wrapper">
+              <input type="text" id="country-search-input" placeholder="Search country..." autocomplete="off">
+              <div id="search-results-dropdown" class="search-dropdown hidden"></div>
+            </div>
+          </div>
           <div class="selected-country-box">
             SELECTED NATION: <strong id="current-country-name">🇺🇸 USA</strong>
           </div>
           <div class="map-zoom-tools">
+            <button class="map-tool-btn" id="btn-saved-wiki-panel" title="Saved Wiki Pages">📚</button>
+            <button class="map-tool-btn" id="btn-settings-panel" title="Controls and API Key">⚙</button>
             <button class="map-tool-btn" id="btn-map-zoom-in" title="Zoom In (+)">➕</button>
             <button class="map-tool-btn" id="btn-map-zoom-out" title="Zoom Out (-)">➖</button>
             <button class="map-tool-btn" id="btn-map-reset" title="Reset View (⟲)">⟲</button>
@@ -125,6 +72,52 @@
             <div class="hover-details">
               <div class="hover-title" id="hover-title">Hover over a country</div>
               <div class="hover-sub" id="hover-sub">Drag map to move • Scroll to zoom • Click country</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="utility-popover hidden" id="saved-wiki-popover">
+          <div class="panel-section saved-wiki-section">
+            <h2 class="panel-title">SAVED WIKI PAGES</h2>
+            <div class="saved-wiki-list" id="saved-wiki-list">
+              <div class="saved-wiki-empty">No saved Wiki pages yet.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="utility-popover settings-popover hidden" id="settings-popover">
+          <div class="panel-section crt-controls">
+            <h2 class="panel-title">CRT & AUDIO TUNER</h2>
+            <div class="tuner-control">
+              <label for="slider-volume">Audio Volume:</label>
+              <input type="range" id="slider-volume" min="0" max="100" value="50">
+            </div>
+            <div class="tuner-control">
+              <label for="slider-curvature">Screen Curvature:</label>
+              <input type="range" id="slider-curvature" min="0" max="100" value="30">
+            </div>
+            <div class="tuner-control">
+              <label for="slider-scanlines">Scanlines:</label>
+              <input type="range" id="slider-scanlines" min="0" max="100" value="50">
+            </div>
+            <div class="tuner-control">
+              <label for="slider-vhs">VHS Static:</label>
+              <input type="range" id="slider-vhs" min="0" max="100" value="20">
+            </div>
+            <div class="tuner-row">
+              <button class="tuner-btn" id="btn-crt-toggle">3D VIEW</button>
+              <button class="tuner-btn" id="btn-static-burst">STATIC</button>
+            </div>
+          </div>
+
+          <div class="panel-section api-key-section">
+            <h2 class="panel-title">GNEWS API KEY (OPTIONAL)</h2>
+            <div class="api-key-row">
+              <input type="password" id="gnews-api-key-input" placeholder="Paste GNews key..." autocomplete="off">
+              <button class="api-eye-btn" id="btn-toggle-gnews-key" type="button" title="Show or hide API key">👁</button>
+            </div>
+            <div id="api-status-badge" style="font-family:var(--font-mono); font-size:9px; color:var(--tt-green); margin-top:4px;">
+              📡 WIKINEWS & REST STREAM ACTIVE
             </div>
           </div>
         </div>
@@ -151,9 +144,6 @@
           </button>
           <button class="dock-btn btn-dock-live-tv" id="btn-dock-live-tv" title="Open Live TV News Broadcast (Reporter Video Feed)" style="border-color:var(--tt-red);">
             <span class="dock-icon">📺</span> LIVE TV NEWS
-          </button>
-          <button class="dock-btn btn-dock-webcams" id="btn-dock-webcams" title="Open Live Global Webcams Grid" style="border-color:var(--tt-green);">
-            <span class="dock-icon">📹</span> LIVE WEBCAMS
           </button>
           <button class="dock-btn btn-dock-grid" id="btn-dock-grid" title="Arrange Popups into 2x2 Grid">
             <span class="dock-icon">🪟</span> GRID 2x2

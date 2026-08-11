@@ -1,10 +1,10 @@
 /* ==========================================================================
    TELETEXT 2099 — MULTI-WINDOW DECK ENGINE WITH SMART WINDOW POSITIONING,
-   LIVE VIDEO BROADCASTS, WEBCAMS, WIKI BROWSER, RESIZABLE PANELS & DECK TABS
+   LIVE VIDEO BROADCASTS, WIKI BROWSER, RESIZABLE PANELS & DECK TABS
    ========================================================================== */
 
-import { getCountry, LIVE_NEWS_STREAMS, LIVE_WEBCAMS } from '../data/countryData.js';
-import { fetchLiveWeather, fetchLiveFinance, fetchLiveNews, fetchWikiSummary, fetchWikiFullSections } from '../data/liveFetchers.js';
+import { getCountry, LIVE_NEWS_STREAMS } from '../data/countryData.js';
+import { fetchLiveWeather, fetchLiveFinance, fetchLiveNews, fetchWikiSummary, fetchWikiFullSections, fetchMediaWikiSourceArticle } from '../data/liveFetchers.js';
 import { synthEngine } from '../audio/synthEngine.js';
 
 const SAVED_WIKI_STORAGE_KEY = 'teletext_saved_wiki_pages';
@@ -41,6 +41,13 @@ function extractWikiTopicFromHref(href) {
   const topic = decodeURIComponent(rawTopic).replace(/_/g, ' ').trim();
   if (!topic || topic.includes(':')) return null;
   return topic;
+}
+
+function formatPublishedAge(publishedAt) {
+  if (!publishedAt) return 'UNDATED';
+  const date = new Date(publishedAt);
+  if (!Number.isFinite(date.getTime())) return 'UNDATED';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 class WindowDeckEngine {
@@ -111,20 +118,18 @@ class WindowDeckEngine {
     const existing = document.getElementById(winId);
     if (existing) {
       this.focusWindow(existing);
-      const iframe = existing.querySelector('iframe');
-      if (iframe) iframe.src = stream.url;
-      existing.querySelectorAll('.channel-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-channel') === channelKey);
-      });
-      const sourceLink = existing.querySelector('.live-source-link');
-      if (sourceLink) sourceLink.href = stream.sourceUrl || stream.url;
       existing.querySelector('.window-title').textContent = `📺 LIVE BROADCAST: ${stream.name}`;
+      this.renderLiveNewsVideoBody(existing, channelKey);
       return;
     }
 
     const win = this.createWindowShell(winId, `📺 LIVE BROADCAST: ${stream.name}`, 540);
     this.attachWindowEvents(win);
+    this.renderLiveNewsVideoBody(win, channelKey);
+  }
 
+  renderLiveNewsVideoBody(win, channelKey) {
+    const stream = LIVE_NEWS_STREAMS[channelKey] || LIVE_NEWS_STREAMS["ALJAZEERA"];
     let channelButtons = '';
     Object.keys(LIVE_NEWS_STREAMS).forEach(key => {
       channelButtons += `
@@ -134,16 +139,29 @@ class WindowDeckEngine {
       `;
     });
 
+    const playerHtml = stream.type === 'source'
+      ? `
+        <div class="internal-live-card">
+          <div class="internal-live-title">${escapeHtml(stream.name)}</div>
+          <button class="internal-live-open" data-source-url="${escapeHtml(stream.sourceUrl || stream.url)}" data-source-title="${escapeHtml(stream.name)}">
+            OPEN LIVE SOURCE INSIDE DECK
+          </button>
+        </div>
+      `
+      : `
+        <div class="video-player-container">
+          <iframe src="${escapeHtml(stream.url)}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>
+        </div>
+      `;
+
     win.querySelector('.window-body').innerHTML = `
       <div class="channel-selector-bar">
         ${channelButtons}
       </div>
-      <div class="video-player-container">
-        <iframe src="${stream.url}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>
-      </div>
+      ${playerHtml}
       <div class="news-card-meta" style="margin-top:6px;">
         <span>🔴 LIVE SATELLITE VIDEO STREAM</span>
-        <a class="live-source-link" href="${stream.sourceUrl || stream.url}" target="_blank" rel="noopener">OPEN LIVE PAGE ↗</a>
+        <button class="inline-source-btn live-source-link" data-source-url="${escapeHtml(stream.sourceUrl || stream.url)}" data-source-title="${escapeHtml(stream.name)}">OPEN LIVE PAGE</button>
       </div>
     `;
 
@@ -151,49 +169,23 @@ class WindowDeckEngine {
       btn.addEventListener('click', () => {
         synthEngine.playRemoteClick();
         const newKey = btn.getAttribute('data-channel');
-        win.querySelectorAll('.channel-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
         const newStream = LIVE_NEWS_STREAMS[newKey];
-        const iframe = win.querySelector('iframe');
-        if (iframe && newStream) iframe.src = newStream.url;
         win.querySelector('.window-title').textContent = `📺 LIVE BROADCAST: ${newStream.name}`;
-        const sourceLink = win.querySelector('.live-source-link');
-        if (sourceLink && newStream) sourceLink.href = newStream.sourceUrl || newStream.url;
+        this.renderLiveNewsVideoBody(win, newKey);
+      });
+    });
+
+    win.querySelectorAll('.inline-source-btn, .internal-live-open').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        synthEngine.playRemoteClick();
+        this.spawnSourceWindow(btn.getAttribute('data-source-title'), btn.getAttribute('data-source-url'));
       });
     });
   }
 
-  // ===== 2. SPAWN LIVE WEBCAMS GRID WINDOW =====
-  spawnLiveWebcamsWindow() {
-    if (!this.deckContainer) return;
-    const winId = `win-live-webcams`;
-
-    const existing = document.getElementById(winId);
-    if (existing) { this.focusWindow(existing); return; }
-
-    const win = this.createWindowShell(winId, `📹 LIVE GLOBAL WEBCAMS MATRIX`, 560);
-    this.attachWindowEvents(win);
-
-    let camGridHtml = '';
-    LIVE_WEBCAMS.forEach(cam => {
-      camGridHtml += `
-        <div class="webcam-card">
-          <div class="webcam-title">🔴 ${cam.city}</div>
-          <iframe src="${cam.url}" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture; web-share" allowfullscreen loading="lazy"></iframe>
-          <a class="webcam-source-link" href="${cam.sourceUrl || cam.url}" target="_blank" rel="noopener">OPEN CAMERA SOURCE ↗</a>
-        </div>
-      `;
-    });
-
-    win.querySelector('.window-body').innerHTML = `
-      <div class="webcams-grid">
-        ${camGridHtml}
-      </div>
-    `;
-  }
-
-  // ===== 3. SPAWN COUNTRY BREAKING NEWS POPUP (REWORKED & SLEEK) =====
+  // ===== 2. SPAWN COUNTRY BREAKING NEWS POPUP (REWORKED & SLEEK) =====
   async spawnNewsWindow(countryCode) {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);
@@ -212,7 +204,14 @@ class WindowDeckEngine {
     `;
     this.attachWindowEvents(win);
 
-    const newsItems = await fetchLiveNews(country.code);
+    await this.renderNewsWindowBody(win, country.code, 10);
+  }
+
+  async renderNewsWindowBody(win, countryCode, maxAgeDays = 10) {
+    const country = getCountry(countryCode);
+    const winId = win.id;
+    const ageOptions = [1, 3, 10, 30];
+    const newsItems = await fetchLiveNews(country.code, maxAgeDays);
 
     let feedHtml = '';
     newsItems.forEach((item, i) => {
@@ -229,15 +228,21 @@ class WindowDeckEngine {
         <div class="modern-news-card">
           <div class="news-card-header">
             <span class="news-badge ${badgeClass}">${isLiveBadge}</span>
-            <span class="news-source-tag">${item.source}</span>
+            <span class="news-source-tag">${item.source} • ${formatPublishedAge(item.publishedAt)}</span>
           </div>
           <h4 class="news-card-title">${cleanTitle}</h4>
           <p class="news-card-body">${item.body}</p>
           ${item.url && item.url !== '#' ? `
             <div class="news-card-footer">
-              <a href="${item.url}" target="_blank" rel="noopener" class="news-read-more-btn">
-                READ FULL SOURCE ↗
-              </a>
+              <button class="news-read-more-btn"
+                data-source-url="${escapeHtml(item.url)}"
+                data-source-title="${escapeHtml(cleanTitle)}"
+                data-source-name="${escapeHtml(item.source)}"
+                data-source-body="${escapeHtml(item.body)}"
+                data-source-published="${escapeHtml(item.publishedAt || '')}"
+                data-country-code="${escapeHtml(country.code)}">
+                READ FULL SOURCE
+              </button>
             </div>
           ` : ''}
         </div>
@@ -247,7 +252,16 @@ class WindowDeckEngine {
     win.querySelector('.window-body').innerHTML = `
       <div class="news-popup-header-banner">
         <div class="news-banner-title">${country.flag} ${country.name} (${country.code})</div>
-        <div class="news-banner-status"><span class="pulse-dot-green"></span> LIVE FEED</div>
+        <div class="news-banner-status"><span class="pulse-dot-green"></span> RECENT FEED</div>
+      </div>
+
+      <div class="news-age-filter">
+        <span>AGE FILTER</span>
+        ${ageOptions.map(days => `
+          <button class="news-age-btn ${days === maxAgeDays ? 'active' : ''}" data-days="${days}">
+            ${days === 1 ? '24H' : `${days}D`}
+          </button>
+        `).join('')}
       </div>
 
       <div style="margin: 10px 0;">
@@ -267,9 +281,113 @@ class WindowDeckEngine {
     win.querySelector(`#btn-open-tv-video-${winId}`)?.addEventListener('click', () => {
       this.spawnLiveNewsVideoWindow(country.liveNewsKey || "ALJAZEERA");
     });
+
+    win.querySelectorAll('.news-age-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        synthEngine.playRemoteClick();
+        const days = Number(btn.getAttribute('data-days')) || 10;
+        win.querySelector('.news-feed-container').innerHTML = `
+          <div style="color:var(--tt-yellow); font-family:var(--font-mono); padding:14px; text-align:center;">
+            REFRESHING RECENT NEWS WINDOW...
+          </div>
+        `;
+        await this.renderNewsWindowBody(win, country.code, days);
+      });
+    });
+
+    win.querySelectorAll('.news-read-more-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        synthEngine.playRemoteClick();
+        this.spawnNewsSourceWindow({
+          title: btn.getAttribute('data-source-title'),
+          url: btn.getAttribute('data-source-url'),
+          source: btn.getAttribute('data-source-name'),
+          body: btn.getAttribute('data-source-body'),
+          publishedAt: btn.getAttribute('data-source-published'),
+          countryCode: btn.getAttribute('data-country-code')
+        });
+      });
+    });
   }
 
-  // ===== 4. SPAWN WIKIPEDIA ARTICLE DOSSIER WINDOW (FULL UNCUT ARTICLES) =====
+  async spawnNewsSourceWindow(sourceItem) {
+    if (!this.deckContainer || !sourceItem?.url) return;
+
+    const cleanTitle = sourceItem.title || 'NEWS SOURCE';
+    const winId = `win-news-source-${String(cleanTitle).replace(/[^a-zA-Z0-9]/g, '-').substring(0, 34)}-${Date.now().toString(36)}`;
+    const win = this.createWindowShell(winId, `📰 SOURCE: ${String(cleanTitle).toUpperCase().substring(0, 40)}`, 680);
+    win.querySelector('.window-body').innerHTML = `
+      <div class="source-dossier-loading">RENDERING SOURCE DOSSIER...</div>
+    `;
+    this.attachWindowEvents(win);
+
+    const mediaWikiArticle = await fetchMediaWikiSourceArticle(sourceItem.url);
+    const sourceName = mediaWikiArticle.success ? mediaWikiArticle.source : (sourceItem.source || 'NEWS SOURCE');
+    const articleTitle = mediaWikiArticle.success ? mediaWikiArticle.title : cleanTitle;
+    const bodyHtml = mediaWikiArticle.success
+      ? mediaWikiArticle.bodyHtml
+      : `<p>${escapeHtml(sourceItem.body || 'No article body was returned by the live feed. The source URL is preserved below for verification.')}</p>`;
+
+    win.querySelector('.window-body').innerHTML = `
+      <div class="source-dossier-header">
+        <div>
+          <div class="source-dossier-kicker">${escapeHtml(sourceName)}</div>
+          <div class="source-dossier-title">${escapeHtml(articleTitle)}</div>
+        </div>
+        <span class="source-dossier-badge">INTERNAL VIEW</span>
+      </div>
+      <div class="source-dossier-meta">
+        <span>${escapeHtml(sourceItem.publishedAt || 'LIVE FEED SNAPSHOT')}</span>
+        <span>${escapeHtml(sourceItem.url)}</span>
+      </div>
+      <div class="source-dossier-content">
+        ${bodyHtml}
+      </div>
+    `;
+
+    this.bindNewsSourceLinks(win, sourceItem);
+  }
+
+  bindNewsSourceLinks(win, sourceItem) {
+    win.querySelectorAll('.source-dossier-content a[href]').forEach(link => {
+      const topic = extractWikiTopicFromHref(link.getAttribute('href'));
+      link.classList.add('wiki-link');
+      link.removeAttribute('target');
+      link.removeAttribute('rel');
+      link.setAttribute('href', '#');
+
+      if (topic) {
+        link.setAttribute('data-topic', topic);
+        link.setAttribute('data-country-code', sourceItem.countryCode || 'USA');
+      } else {
+        link.setAttribute('data-disabled-link', 'true');
+      }
+    });
+  }
+
+  spawnSourceWindow(title, url) {
+    if (!this.deckContainer || !url) return;
+
+    const cleanTitle = title || 'LIVE SOURCE';
+    const winId = `win-source-${String(cleanTitle).replace(/[^a-zA-Z0-9]/g, '-').substring(0, 36)}-${Date.now().toString(36)}`;
+    const win = this.createWindowShell(winId, `🔎 SOURCE: ${String(cleanTitle).toUpperCase().substring(0, 42)}`, 720);
+    this.attachWindowEvents(win);
+
+    win.querySelector('.window-body').innerHTML = `
+      <div class="source-viewer-bar">
+        <span>${escapeHtml(url)}</span>
+      </div>
+      <div class="source-viewer-frame">
+        <iframe src="${escapeHtml(url)}" frameborder="0" scrolling="no" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" allow="autoplay; fullscreen; picture-in-picture" loading="lazy"></iframe>
+      </div>
+    `;
+  }
+
+  // ===== 3. SPAWN WIKIPEDIA ARTICLE DOSSIER WINDOW (FULL UNCUT ARTICLES) =====
   async spawnWikiWindow(topicTitle, countryCode = 'USA') {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);
@@ -436,7 +554,7 @@ class WindowDeckEngine {
     this.spawnWikiWindow(topic, link.getAttribute('data-country-code') || 'USA');
   }
 
-  // ===== 5. SPAWN WEATHER WINDOW =====
+  // ===== 4. SPAWN WEATHER WINDOW =====
   async spawnWeatherWindow(countryCode) {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);
@@ -464,7 +582,7 @@ class WindowDeckEngine {
     `;
   }
 
-  // ===== 6. SPAWN FINANCE WINDOW =====
+  // ===== 5. SPAWN FINANCE WINDOW =====
   async spawnFinanceWindow(countryCode) {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);
@@ -495,7 +613,7 @@ class WindowDeckEngine {
     `;
   }
 
-  // ===== 7. SPAWN QUIZ WINDOW =====
+  // ===== 6. SPAWN QUIZ WINDOW =====
   spawnQuizWindow(countryCode) {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);
@@ -542,7 +660,7 @@ class WindowDeckEngine {
     this.attachWindowEvents(win);
   }
 
-  // ===== 8. SPAWN FACTS WINDOW =====
+  // ===== 7. SPAWN FACTS WINDOW =====
   spawnFactsWindow(countryCode) {
     if (!this.deckContainer) return;
     const country = getCountry(countryCode);

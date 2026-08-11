@@ -101,10 +101,38 @@ const ISO3_TO_ISO2 = {
   "ALB":"al","MKD":"mk","MNE":"me","ISL":"is","MLT":"mt","CYP":"cy","LUX":"lu"
 };
 
-export async function fetchLiveNews(countryCode) {
+const NEWS_DATE_OPTIONS = {
+  1: "24 HOURS",
+  3: "3 DAYS",
+  10: "10 DAYS",
+  30: "30 DAYS"
+};
+
+function getNewsCutoff(maxAgeDays = 10) {
+  const days = Number(maxAgeDays) || 10;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+function isRecentPublishedAt(publishedAt, maxAgeDays = 10) {
+  if (!publishedAt) return false;
+  const date = new Date(publishedAt);
+  return Number.isFinite(date.getTime()) && date >= getNewsCutoff(maxAgeDays);
+}
+
+function formatCurrentEventsDate(date) {
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${months[date.getMonth()]}_${date.getDate()},_${date.getFullYear()}`;
+}
+
+function cleanHtmlText(value) {
+  return String(value || '').replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+}
+
+export async function fetchLiveNews(countryCode, maxAgeDays = 10) {
   const country = getCountry(countryCode);
   const iso2 = ISO3_TO_ISO2[countryCode] || country.iso2 || 'us';
   const storedKey = localStorage.getItem('gnews_api_key') || "";
+  const ageLabel = NEWS_DATE_OPTIONS[maxAgeDays] || `${maxAgeDays} DAYS`;
 
   // ─── SOURCE A: GNews API (if user has key) ───
   if (storedKey && storedKey.trim().length > 5) {
@@ -113,8 +141,9 @@ export async function fetchLiveNews(countryCode) {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        if (data.articles && data.articles.length > 0) {
-          return data.articles.map(a => ({
+        const recentArticles = (data.articles || []).filter(a => isRecentPublishedAt(a.publishedAt, maxAgeDays));
+        if (recentArticles.length > 0) {
+          return recentArticles.map(a => ({
             title: a.title.toUpperCase(),
             body: a.description || a.content || "Full coverage available at source.",
             source: a.source?.name || "GNews",
@@ -131,13 +160,14 @@ export async function fetchLiveNews(countryCode) {
 
   // ─── SOURCE B: WikiNews (100% Free, country-specific search) ───
   try {
-    const wikiUrl = `https://en.wikinews.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(country.name + " news")}&srlimit=5&format=json&origin=*`;
+    const wikiUrl = `https://en.wikinews.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(country.name + " news")}&srlimit=10&format=json&origin=*`;
     const res = await fetch(wikiUrl);
     if (res.ok) {
       const data = await res.json();
-      if (data.query && data.query.search && data.query.search.length >= 2) {
-        return data.query.search.slice(0, 5).map(item => {
-          const cleanSnippet = item.snippet.replace(/<[^>]*>?/gm, '');
+      const recentResults = (data.query?.search || []).filter(item => isRecentPublishedAt(item.timestamp, maxAgeDays));
+      if (recentResults.length > 0) {
+        return recentResults.slice(0, 5).map(item => {
+          const cleanSnippet = cleanHtmlText(item.snippet);
           return {
             title: item.title.toUpperCase(),
             body: cleanSnippet.length > 20 ? cleanSnippet : `Breaking development reported in ${country.name}.`,
@@ -155,108 +185,73 @@ export async function fetchLiveNews(countryCode) {
 
   // ─── SOURCE C: Wikipedia Current Events Portal Scrape (100% Free) ───
   try {
-    const today = new Date();
-    const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const dateStr = `${months[today.getMonth()]}_${today.getDate()},_${today.getFullYear()}`;
-    const portalUrl = `https://en.wikipedia.org/w/api.php?action=parse&page=Portal:Current_events/${dateStr}&prop=text&format=json&origin=*`;
-    const res = await fetch(portalUrl);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.parse && data.parse.text) {
-        const html = data.parse.text['*'] || '';
-        // Extract list items from the HTML
-        const liRegex = /<li[^>]*>(.*?)<\/li>/gs;
-        const items = [];
-        let match;
-        while ((match = liRegex.exec(html)) !== null && items.length < 5) {
-          let text = match[1].replace(/<[^>]*>?/gm, '').trim();
-          if (text.length > 30 && text.toLowerCase().includes(country.name.toLowerCase())) {
-            items.push(text);
-          }
-        }
-        // If we found country-specific items, return them
-        if (items.length >= 1) {
-          return items.map(text => ({
-            title: text.substring(0, 80).toUpperCase(),
-            body: text,
-            source: "WIKIPEDIA CURRENT EVENTS",
-            url: `https://en.wikipedia.org/wiki/Portal:Current_events`,
-            isLive: true,
-            publishedAt: today.toISOString()
-          }));
-        }
-        // Otherwise grab any global headlines
-        const allItems = [];
-        liRegex.lastIndex = 0;
-        while ((match = liRegex.exec(html)) !== null && allItems.length < 4) {
-          let text = match[1].replace(/<[^>]*>?/gm, '').trim();
-          if (text.length > 40) {
-            allItems.push(text);
-          }
-        }
-        if (allItems.length >= 1) {
-          return allItems.map(text => ({
-            title: text.substring(0, 80).toUpperCase(),
-            body: text,
-            source: "WIKIPEDIA GLOBAL EVENTS",
-            url: `https://en.wikipedia.org/wiki/Portal:Current_events`,
-            isLive: true,
-            publishedAt: today.toISOString()
-          }));
+    const countryItems = [];
+    const globalItems = [];
+
+    const dayLimit = Math.min(Number(maxAgeDays) || 10, 30);
+    const eventPages = await Promise.allSettled(
+      Array.from({ length: dayLimit }, async (_, offset) => {
+        const eventDate = new Date(Date.now() - offset * 24 * 60 * 60 * 1000);
+        const dateStr = formatCurrentEventsDate(eventDate);
+        const portalUrl = `https://en.wikipedia.org/w/api.php?action=parse&page=Portal:Current_events/${dateStr}&prop=text&format=json&origin=*`;
+        const res = await fetch(portalUrl);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return {
+          eventDate,
+          dateStr,
+          html: data.parse?.text?.['*'] || ''
+        };
+      })
+    );
+
+    eventPages.forEach(result => {
+      if (result.status !== 'fulfilled' || !result.value?.html || countryItems.length >= 5) return;
+      const { eventDate, dateStr, html } = result.value;
+      const liRegex = /<li[^>]*>(.*?)<\/li>/gs;
+      let match;
+      while ((match = liRegex.exec(html)) !== null) {
+        const text = cleanHtmlText(match[1]);
+        if (text.length <= 40) continue;
+
+        const item = {
+          title: text.substring(0, 80).toUpperCase(),
+          body: text,
+          source: "WIKIPEDIA CURRENT EVENTS",
+          url: `https://en.wikipedia.org/wiki/Portal:Current_events/${dateStr}`,
+          isLive: true,
+          publishedAt: eventDate.toISOString()
+        };
+
+        if (text.toLowerCase().includes(country.name.toLowerCase())) {
+          countryItems.push(item);
+          if (countryItems.length >= 5) break;
+        } else if (globalItems.length < 5) {
+          globalItems.push({
+            ...item,
+            source: "WIKIPEDIA GLOBAL EVENTS"
+          });
         }
       }
+    });
+
+    if (countryItems.length > 0) {
+      return countryItems.slice(0, 5);
+    }
+
+    if (globalItems.length > 0) {
+      return globalItems.slice(0, 4);
     }
   } catch (e) {
     console.warn("Wikipedia Current Events fetch error:", e);
   }
 
-  // ─── SOURCE D: Wikipedia country article extract (guaranteed unique per country!) ───
-  try {
-    const wikiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(country.name)}`;
-    const res = await fetch(wikiUrl);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.extract && data.extract.length > 50) {
-        const sentences = data.extract.split('. ');
-        const chunks = [];
-        for (let i = 0; i < sentences.length && chunks.length < 3; i += 2) {
-          const chunk = sentences.slice(i, i + 2).join('. ');
-          if (chunk.length > 30) {
-            chunks.push(chunk);
-          }
-        }
-        return chunks.map((text, idx) => ({
-          title: `${country.name.toUpperCase()} — INTEL BRIEFING ${idx + 1}`,
-          body: text + (text.endsWith('.') ? '' : '.'),
-          source: "WIKIPEDIA DOSSIER",
-          url: `https://en.wikipedia.org/wiki/${encodeURIComponent(country.name)}`,
-          isLive: false,
-          publishedAt: null
-        }));
-      }
-    }
-  } catch (e) {
-    console.warn("Wikipedia summary news fallback error:", e);
-  }
-
-  // ─── SOURCE E: Built-in country data fallback ───
-  if (country.news && country.news.length > 0) {
-    return country.news.map(item => ({
-      title: item.title,
-      body: item.body,
-      source: "CEEFAX SATELLITE",
-      url: "#",
-      isLive: false,
-      publishedAt: null
-    }));
-  }
-
-  // ─── SOURCE F: Absolute last resort ───
+  // ─── SOURCE D: Explicit no-recent-news state, never stale "live" news ───
   return [
     {
-      title: `${country.name.toUpperCase()} — SATELLITE UPLINK ESTABLISHED`,
-      body: `Real-time monitoring active for ${country.name}. Capital: ${country.capital}. Currency: ${country.currency}. Tune in to LIVE TV for broadcast coverage.`,
-      source: "CEEFAX BEACON",
+      title: `${country.name.toUpperCase()} — NO RECENT MATCHES`,
+      body: `No dated news items for ${country.name} were found inside the selected ${ageLabel} filter using the free sources currently available. Try a wider filter or add a GNews key for stronger current coverage.`,
+      source: "RECENT NEWS FILTER",
       url: "#",
       isLive: false,
       publishedAt: null
@@ -352,3 +347,56 @@ export async function fetchWikiFullSections(topicTitle) {
   return { title: topicTitle, sections: [], success: false };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. THEMED MEDIAWIKI SOURCE FETCHER (WikiNews / Wikipedia)
+// ═══════════════════════════════════════════════════════════════════════════
+export async function fetchMediaWikiSourceArticle(sourceUrl) {
+  try {
+    const url = new URL(sourceUrl);
+    const allowedHosts = ['en.wikinews.org', 'en.wikipedia.org'];
+    if (!allowedHosts.includes(url.hostname)) {
+      return { success: false };
+    }
+
+    let pageTitle = '';
+    if (url.pathname.startsWith('/wiki/')) {
+      pageTitle = decodeURIComponent(url.pathname.replace('/wiki/', '')).replace(/_/g, ' ');
+    } else {
+      pageTitle = url.searchParams.get('title') || '';
+    }
+    if (!pageTitle) return { success: false };
+
+    const apiUrl = `https://${url.hostname}/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=text|sections&format=json&origin=*`;
+    const res = await fetch(apiUrl);
+    if (!res.ok) throw new Error("MediaWiki source fetch failed");
+
+    const data = await res.json();
+    const rawHtml = data.parse?.text?.['*'];
+    if (!rawHtml) return { success: false };
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(rawHtml, 'text/html');
+    doc.querySelectorAll('script, style, table, figure, .mw-editsection, .reference, .reflist, .navbox, .vertical-navbox, .metadata, .noprint, .printfooter').forEach(el => el.remove());
+    doc.querySelectorAll('a[href]').forEach(link => {
+      link.removeAttribute('target');
+      link.removeAttribute('rel');
+    });
+
+    const blocks = [...doc.body.querySelectorAll('p, li')]
+      .map(node => node.outerHTML)
+      .filter(html => html.replace(/<[^>]+>/g, '').trim().length > 45)
+      .slice(0, 18);
+
+    return {
+      success: blocks.length > 0,
+      title: data.parse?.title || pageTitle,
+      source: url.hostname.includes('wikinews') ? 'WIKINEWS' : 'WIKIPEDIA',
+      bodyHtml: blocks.join(''),
+      sourceUrl
+    };
+  } catch (e) {
+    console.warn("MediaWiki themed source fallback used:", e);
+  }
+
+  return { success: false };
+}

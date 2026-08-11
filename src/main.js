@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 6. Bind Map Zoom Tools & GNews API Key Saver
   bindMapToolsAndApiKey();
+  bindUtilityPopovers();
 
   // 7. Bind Dock Action Buttons & Remote Controls
   bindDockAndRemoteButtons();
@@ -55,6 +56,7 @@ function selectCountry(countryCode) {
   // Update selected country indicator
   const nameEl = document.getElementById('current-country-name');
   if (nameEl) nameEl.textContent = `${country.flag} ${country.name}`;
+  worldMapExplorer.updateSignalPanels(country.code);
 
   // Automatically spawn News Deck Popup for selected country!
   windowDeckEngine.spawnNewsWindow(country.code);
@@ -170,6 +172,42 @@ function bindMapToolsAndApiKey() {
   });
 }
 
+function bindUtilityPopovers() {
+  const savedBtn = document.getElementById('btn-saved-wiki-panel');
+  const settingsBtn = document.getElementById('btn-settings-panel');
+  const savedPanel = document.getElementById('saved-wiki-popover');
+  const settingsPanel = document.getElementById('settings-popover');
+  const panels = [savedPanel, settingsPanel].filter(Boolean);
+
+  const closePanels = () => panels.forEach(panel => panel.classList.add('hidden'));
+  const togglePanel = (panel) => {
+    const shouldOpen = panel?.classList.contains('hidden');
+    closePanels();
+    if (panel && shouldOpen) panel.classList.remove('hidden');
+  };
+
+  savedBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    synthEngine.playRemoteClick();
+    togglePanel(savedPanel);
+  });
+
+  settingsBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    synthEngine.playRemoteClick();
+    togglePanel(settingsPanel);
+  });
+
+  panels.forEach(panel => {
+    panel.addEventListener('click', (e) => e.stopPropagation());
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.deck-window')) return;
+    closePanels();
+  });
+}
+
 function bindDockAndRemoteButtons() {
   // --- Bottom Dock Bar Buttons ---
   document.getElementById('btn-dock-wiki')?.addEventListener('click', () => {
@@ -200,11 +238,6 @@ function bindDockAndRemoteButtons() {
   // Live Video Broadcast (TV-style reporter news feed)
   document.getElementById('btn-dock-live-tv')?.addEventListener('click', () => {
     windowDeckEngine.spawnLiveNewsVideoWindow('ALJAZEERA');
-  });
-
-  // Live Webcams Grid
-  document.getElementById('btn-dock-webcams')?.addEventListener('click', () => {
-    windowDeckEngine.spawnLiveWebcamsWindow();
   });
 
   document.getElementById('btn-dock-grid')?.addEventListener('click', () => {
