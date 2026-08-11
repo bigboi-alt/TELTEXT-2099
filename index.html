@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TELETEXT 2099 — Cyberpunk News Deck & Broadcast Matrix</title>
+  <meta name="description" content="A 90s retro-futuristic Teletext broadcast control room featuring an interactive world news map, 3D CRT television shaders, multi-window news deck grid, country popups, and WebAudio synth.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+  
+  <!-- Inline Favicon to prevent 404 -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📺</text></svg>">
+  
+  <link rel="stylesheet" href="/src/style/index.css">
+
+  <!-- Universal CDNs (Official Standalone Bundles) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+</head>
+<body class="theme-teletext">
+  <!-- Top Broadcast Command Bar -->
+  <header class="broadcast-header">
+    <div class="header-left">
+      <div class="live-badge"><span class="pulse-dot"></span> LIVE BROADCAST</div>
+      <h1 class="header-title">TELETEXT <span class="highlight">2099</span> MATRIX</h1>
+    </div>
+
+    <div class="header-right">
+      <button class="theme-toggle-btn" id="theme-toggle-btn" title="Toggle Theme (Retro Teletext / Modern Mono)">
+        🌓 THEME: <span id="theme-status-text">TELETEXT</span>
+      </button>
+      <button class="audio-toggle-btn" id="audio-toggle" title="Toggle WebAudio Sound Engine">
+        <span class="audio-icon">🔊</span> AUDIO: <span id="audio-status">ON</span>
+      </button>
+      <div class="system-time" id="system-time">00:00:00 UTC</div>
+    </div>
+  </header>
+
+  <!-- Main Application Layout -->
+  <div class="app-layout">
+    <!-- Left Sidebar: Country Search, Saved Wiki Pages & Tuning -->
+    <aside class="control-panel">
+      <!-- Country Search Box -->
+      <div class="panel-section search-section">
+        <h2 class="panel-title">🔎 COUNTRY SEARCH MATRIX</h2>
+        <div class="search-box-wrapper">
+          <input type="text" id="country-search-input" placeholder="Type country name..." autocomplete="off">
+          <div id="search-results-dropdown" class="search-dropdown hidden"></div>
+        </div>
+      </div>
+
+      <div class="panel-section saved-wiki-section">
+        <h2 class="panel-title">SAVED WIKI PAGES</h2>
+        <div class="saved-wiki-list" id="saved-wiki-list">
+          <div class="saved-wiki-empty">No saved Wiki pages yet.</div>
+        </div>
+      </div>
+
+      <!-- TV CRT Hardware Tuning Controls -->
+      <div class="panel-section crt-controls">
+        <h2 class="panel-title">CRT & AUDIO TUNER</h2>
+        
+        <div class="tuner-control">
+          <label for="slider-volume">Audio Volume:</label>
+          <input type="range" id="slider-volume" min="0" max="100" value="50">
+        </div>
+
+        <div class="tuner-control">
+          <label for="slider-curvature">Screen Curvature:</label>
+          <input type="range" id="slider-curvature" min="0" max="100" value="30">
+        </div>
+
+        <div class="tuner-control">
+          <label for="slider-scanlines">Scanlines:</label>
+          <input type="range" id="slider-scanlines" min="0" max="100" value="50">
+        </div>
+
+        <div class="tuner-control">
+          <label for="slider-vhs">VHS Static:</label>
+          <input type="range" id="slider-vhs" min="0" max="100" value="20">
+        </div>
+
+        <div class="tuner-row">
+          <button class="tuner-btn" id="btn-crt-toggle">3D VIEW</button>
+          <button class="tuner-btn" id="btn-static-burst">STATIC</button>
+        </div>
+      </div>
+
+      <!-- API Key Config -->
+      <div class="panel-section api-key-section">
+        <h2 class="panel-title">GNEWS API KEY (OPTIONAL)</h2>
+        <div class="api-key-row">
+          <input type="password" id="gnews-api-key-input" placeholder="Paste GNews key..." autocomplete="off">
+          <button class="api-eye-btn" id="btn-toggle-gnews-key" type="button" title="Show or hide API key">👁</button>
+        </div>
+        <div id="api-status-badge" style="font-family:var(--font-mono); font-size:9px; color:var(--tt-green); margin-top:4px;">
+          📡 WIKINEWS & REST STREAM ACTIVE
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center Workspace: Full Moveable Map Viewport + Bottom Dock Bar -->
+    <main class="viewport-workspace">
+      <!-- World Map Viewport -->
+      <section class="map-section">
+        <div class="map-header">
+          <div class="section-tag">📡 GLOBE-TEXT 200 // MOVEABLE WORLD MAP (DRAG & ZOOM)</div>
+          <div class="selected-country-box">
+            SELECTED NATION: <strong id="current-country-name">🇺🇸 USA</strong>
+          </div>
+          <div class="map-zoom-tools">
+            <button class="map-tool-btn" id="btn-map-zoom-in" title="Zoom In (+)">➕</button>
+            <button class="map-tool-btn" id="btn-map-zoom-out" title="Zoom Out (-)">➖</button>
+            <button class="map-tool-btn" id="btn-map-reset" title="Reset View (⟲)">⟲</button>
+          </div>
+        </div>
+
+        <div class="map-container" id="map-container">
+          <div class="map-overlay-info" id="map-hover-card">
+            <div class="hover-flag" id="hover-flag">🌐</div>
+            <div class="hover-details">
+              <div class="hover-title" id="hover-title">Hover over a country</div>
+              <div class="hover-sub" id="hover-sub">Drag map to move • Scroll to zoom • Click country</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prominent Bottom Dock Action Bar -->
+        <div class="dock-action-bar">
+          <button class="dock-btn btn-dock-wiki" id="btn-dock-wiki" title="Open Wikipedia Tab Window">
+            <span class="dock-icon">🌐</span> WIKI DOSSIER
+          </button>
+          <button class="dock-btn btn-dock-news" id="btn-dock-news" title="Open News Popup">
+            <span class="dock-icon">📰</span> BREAKING NEWS
+          </button>
+          <button class="dock-btn btn-dock-weather" id="btn-dock-weather" title="Open Weather Popup">
+            <span class="dock-icon">🌤️</span> LIVE WEATHER
+          </button>
+          <button class="dock-btn btn-dock-market" id="btn-dock-market" title="Open Stock Market Popup">
+            <span class="dock-icon">📈</span> MARKET TICKER
+          </button>
+          <button class="dock-btn btn-dock-quiz" id="btn-dock-quiz" title="Open Trivia Quiz Popup">
+            <span class="dock-icon">🎮</span> TRIVIA QUIZ
+          </button>
+          <button class="dock-btn btn-dock-facts" id="btn-dock-facts" title="Open Facts Corner Popup">
+            <span class="dock-icon">💡</span> FACTS CORNER
+          </button>
+          <button class="dock-btn btn-dock-live-tv" id="btn-dock-live-tv" title="Open Live TV News Broadcast (Reporter Video Feed)" style="border-color:var(--tt-red);">
+            <span class="dock-icon">📺</span> LIVE TV NEWS
+          </button>
+          <button class="dock-btn btn-dock-webcams" id="btn-dock-webcams" title="Open Live Global Webcams Grid" style="border-color:var(--tt-green);">
+            <span class="dock-icon">📹</span> LIVE WEBCAMS
+          </button>
+          <button class="dock-btn btn-dock-grid" id="btn-dock-grid" title="Arrange Popups into 2x2 Grid">
+            <span class="dock-icon">🪟</span> GRID 2x2
+          </button>
+          <button class="dock-btn btn-dock-clear" id="btn-dock-clear" title="Clear All Floating Popups">
+            <span class="dock-icon">🧹</span> CLEAR DECK
+          </button>
+        </div>
+
+        <!-- Interactive Open Window / Tab Bar -->
+        <div class="deck-tabs-bar" id="deck-tabs-bar">
+          <div class="tabs-label">OPEN DECK TABS:</div>
+          <div class="tabs-list" id="tabs-list">
+            <span class="no-tabs-hint">No active windows open. Click map or dock buttons above!</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Hidden CRT Canvas -->
+  <div style="display:none;"><canvas id="crt-canvas"></canvas></div>
+
+  <!-- Floating News Deck Layer -->
+  <div class="news-deck-layer" id="news-deck-layer"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
